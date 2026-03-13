@@ -1,0 +1,18 @@
+{
+  "name": "pi-behavior-monitors",
+  "version": "0.1.0",
+  "description": "Behavior monitors for pi that watch agent activity and steer corrections",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./index.ts"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  }
+}
