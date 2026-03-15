@@ -9,6 +9,13 @@
     "extensions": ["./index.ts"],
     "skills": ["./skills"]
   },
+  "scripts": {
+    "release": "npx changelogen --bump --release",
+    "release:patch": "npx changelogen --bump --release --patch",
+    "release:minor": "npx changelogen --bump --release --minor",
+    "release:major": "npx changelogen --bump --release --major",
+    "release:push": "git push --follow-tags"
+  },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
