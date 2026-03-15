@@ -1,3 +1,12 @@
+/**
+ * Behavior monitors for pi — watches agent activity, classifies against
+ * pattern libraries, steers corrections, and writes structured findings
+ * to JSON files for downstream consumption.
+ *
+ * Monitor definitions are JSON files (.monitor.json) with typed blocks:
+ * classify (LLM side-channel), patterns (JSON library), actions (steer + write).
+ * Patterns and instructions are JSON arrays conforming to schemas.
+ */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +21,7 @@ import type {
 	SessionMessageEntry,
 	TurnEndEvent,
 } from "@mariozechner/pi-coding-agent";
-import { getAgentDir, parseFrontmatter } from "@mariozechner/pi-coding-agent";
+import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import { Box, Text } from "@mariozechner/pi-tui";
 
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -22,21 +31,74 @@ const EXAMPLES_DIR = path.join(EXTENSION_DIR, "examples");
 // Types
 // =============================================================================
 
-export interface Monitor {
+export interface MonitorScope {
+	target: "main" | "subagent" | "all" | "workflow";
+	filter?: {
+		agent_type?: string[];
+		step_name?: string;
+		workflow?: string;
+	};
+}
+
+export interface MonitorAction {
+	steer?: string | null;
+	learn_pattern?: boolean;
+	write?: {
+		path: string;
+		schema?: string;
+		merge: "append" | "upsert";
+		array_field: string;
+		template: Record<string, string>;
+	};
+}
+
+export interface MonitorSpec {
 	name: string;
 	description: string;
-	event: string;
+	event: MonitorEvent;
 	when: string;
-	model: string;
-	context: string[];
-	steer: string;
+	scope: MonitorScope;
+	classify: {
+		model: string;
+		context: string[];
+		excludes: string[];
+		prompt: string;
+	};
+	patterns: {
+		path: string;
+		learn: boolean;
+	};
+	instructions: {
+		path: string;
+	};
+	actions: {
+		on_flag?: MonitorAction | null;
+		on_new?: MonitorAction | null;
+		on_clean?: MonitorAction | null;
+	};
 	ceiling: number;
-	escalate: string;
-	excludes: string[];
-	template: string;
-	patternsFile: string;
-	instructionsFile: string;
+	escalate: "ask" | "dismiss";
+}
+
+export interface MonitorPattern {
+	id: string;
+	description: string;
+	severity?: string;
+	category?: string;
+	examples?: string[];
+	learned_at?: string;
+	source?: string;
+}
+
+export interface MonitorInstruction {
+	text: string;
+	added_at?: string;
+}
+
+export interface Monitor extends MonitorSpec {
 	dir: string;
+	resolvedPatternsPath: string;
+	resolvedInstructionsPath: string;
 	// runtime state
 	activationCount: number;
 	whileCount: number;
@@ -93,8 +155,8 @@ function discoverMonitors(): Monitor[] {
 
 	const seen = new Map<string, Monitor>();
 	for (const dir of dirs) {
-		for (const file of listMdFiles(dir)) {
-			const monitor = parseMonitorFile(path.join(dir, file), dir);
+		for (const file of listMonitorFiles(dir)) {
+			const monitor = parseMonitorJson(path.join(dir, file), dir);
 			if (monitor && !seen.has(monitor.name)) {
 				seen.set(monitor.name, monitor);
 			}
@@ -107,56 +169,73 @@ function isDir(p: string): boolean {
 	try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
-function listMdFiles(dir: string): string[] {
+function listMonitorFiles(dir: string): string[] {
 	try {
-		return fs.readdirSync(dir).filter((f) =>
-			f.endsWith(".md") && !f.includes(".patterns.") && !f.includes(".instructions."));
+		return fs.readdirSync(dir).filter((f) => f.endsWith(".monitor.json"));
 	} catch { return []; }
 }
 
-function parseMonitorFile(filePath: string, dir: string): Monitor | null {
-	let content: string;
-	try { content = fs.readFileSync(filePath, "utf-8"); } catch { return null; }
+function parseMonitorJson(filePath: string, dir: string): Monitor | null {
+	let raw: string;
+	try { raw = fs.readFileSync(filePath, "utf-8"); } catch { return null; }
 
-	const { frontmatter: fm, body } = parseFrontmatter<Record<string, unknown>>(content);
-	if (!fm.name) return null;
+	let spec: Record<string, unknown>;
+	try { spec = JSON.parse(raw); } catch {
+		console.error(`[monitors] Failed to parse ${filePath}`);
+		return null;
+	}
 
-	const name = String(fm.name);
-	const contextRaw = fm.context;
-	const context: string[] = Array.isArray(contextRaw)
-		? contextRaw.map(String)
-		: typeof contextRaw === "string"
-			? contextRaw.split(",").map((s: string) => s.trim()).filter(Boolean)
-			: ["tool_results", "assistant_text"];
+	const name = spec.name as string | undefined;
+	if (!name) return null;
 
-	const excludesRaw = fm.excludes;
-	const excludes: string[] = Array.isArray(excludesRaw)
-		? excludesRaw.map(String)
-		: typeof excludesRaw === "string"
-			? excludesRaw.split(",").map((s: string) => s.trim()).filter(Boolean)
-			: [];
-
-	const event = String(fm.event ?? "message_end");
+	const event = String(spec.event ?? "message_end");
 	if (!isValidEvent(event)) {
 		console.error(`[${name}] Invalid event: ${event}. Must be one of: ${[...VALID_EVENTS].join(", ")}`);
 		return null;
 	}
 
+	const classify = spec.classify as MonitorSpec["classify"] | undefined;
+	if (!classify?.prompt) {
+		console.error(`[${name}] Missing classify.prompt`);
+		return null;
+	}
+
+	const patternsSpec = spec.patterns as MonitorSpec["patterns"] | undefined;
+	if (!patternsSpec?.path) {
+		console.error(`[${name}] Missing patterns.path`);
+		return null;
+	}
+
+	const scope = spec.scope as MonitorScope | undefined;
+	const instructions = spec.instructions as MonitorSpec["instructions"] | undefined;
+	const actions = spec.actions as MonitorSpec["actions"] | undefined;
+
 	return {
 		name,
-		description: String(fm.description ?? ""),
-		event,
-		when: String(fm.when ?? "always"),
-		model: String(fm.model ?? "claude-sonnet-4-20250514"),
-		context,
-		steer: String(fm.steer ?? "Fix the issue."),
-		ceiling: Number(fm.ceiling) || 5,
-		escalate: String(fm.escalate ?? "ask"),
-		excludes,
-		template: body,
-		patternsFile: path.join(dir, `${name}.patterns.md`),
-		instructionsFile: path.join(dir, `${name}.instructions.md`),
+		description: String(spec.description ?? ""),
+		event: event as MonitorEvent,
+		when: String(spec.when ?? "always"),
+		scope: scope ?? { target: "main" },
+		classify: {
+			model: classify.model ?? "claude-sonnet-4-20250514",
+			context: Array.isArray(classify.context) ? classify.context : ["tool_results", "assistant_text"],
+			excludes: Array.isArray(classify.excludes) ? classify.excludes : [],
+			prompt: classify.prompt,
+		},
+		patterns: {
+			path: patternsSpec.path,
+			learn: patternsSpec.learn !== false,
+		},
+		instructions: {
+			path: instructions?.path ?? `${name}.instructions.json`,
+		},
+		actions: actions ?? {},
+		ceiling: Number(spec.ceiling) || 5,
+		escalate: (spec.escalate === "dismiss" ? "dismiss" : "ask"),
 		dir,
+		resolvedPatternsPath: path.resolve(dir, patternsSpec.path),
+		resolvedInstructionsPath: path.resolve(dir, instructions?.path ?? `${name}.instructions.json`),
+		// runtime state
 		activationCount: 0,
 		whileCount: 0,
 		lastUserText: "",
@@ -168,10 +247,6 @@ function parseMonitorFile(filePath: string, dir: string): Monitor | null {
 // Example seeding
 // =============================================================================
 
-/**
- * Resolve the project-local monitors directory.
- * Walks up from cwd looking for `.pi/`, or defaults to `<cwd>/.pi/monitors`.
- */
 function resolveProjectMonitorsDir(): string {
 	let cwd = process.cwd();
 	while (true) {
@@ -184,27 +259,16 @@ function resolveProjectMonitorsDir(): string {
 	return path.join(process.cwd(), ".pi", "monitors");
 }
 
-/**
- * If no monitors exist anywhere (project or global), copy bundled examples
- * into the project-local `.pi/monitors/` directory. Never overwrites existing
- * files — only seeds into an empty or non-existent directory.
- *
- * Returns the number of files copied (0 if seeding was skipped).
- */
 function seedExamples(): number {
-	// check if any monitors already exist
 	if (discoverMonitors().length > 0) return 0;
-
-	// check that we have bundled examples to copy
 	if (!isDir(EXAMPLES_DIR)) return 0;
 
 	const targetDir = resolveProjectMonitorsDir();
 	fs.mkdirSync(targetDir, { recursive: true });
 
-	// if the target already has monitor .md files (even if they failed to parse), don't overwrite
-	if (listMdFiles(targetDir).length > 0) return 0;
+	if (listMonitorFiles(targetDir).length > 0) return 0;
 
-	const files = fs.readdirSync(EXAMPLES_DIR).filter((f) => f.endsWith(".md"));
+	const files = fs.readdirSync(EXAMPLES_DIR).filter((f) => f.endsWith(".json"));
 	let copied = 0;
 	for (const file of files) {
 		const dest = path.join(targetDir, file);
@@ -375,38 +439,54 @@ function evaluateWhen(monitor: Monitor, branch: SessionEntry[]): boolean {
 }
 
 // =============================================================================
-// Template rendering
+// Template rendering (JSON patterns → text for LLM prompt)
 // =============================================================================
 
-function renderTemplate(monitor: Monitor, branch: SessionEntry[]): string | null {
-	let patterns: string;
+function loadPatterns(monitor: Monitor): MonitorPattern[] {
 	try {
-		patterns = fs.readFileSync(monitor.patternsFile, "utf-8");
-	} catch (e: unknown) {
-		if (e instanceof Error && "code" in e && e.code === "ENOENT") {
-			console.error(`[${monitor.name}] Patterns file missing: ${monitor.patternsFile}`);
-			return null;
-		}
-		throw e;
+		const raw = fs.readFileSync(monitor.resolvedPatternsPath, "utf-8");
+		return JSON.parse(raw);
+	} catch {
+		return [];
 	}
-	if (!patterns.trim()) return null;
+}
 
-	let instructions = "";
-	try { instructions = fs.readFileSync(monitor.instructionsFile, "utf-8"); } catch { /* optional */ }
+function formatPatternsForPrompt(patterns: MonitorPattern[]): string {
+	return patterns
+		.map((p, i) => `${i + 1}. [${p.severity ?? "warning"}] ${p.description}`)
+		.join("\n");
+}
 
-	const instructionsBlock = instructions.trim()
-		? `\nOperating instructions from the user (follow these strictly):\n${instructions}\n`
-		: "";
+function loadInstructions(monitor: Monitor): MonitorInstruction[] {
+	try {
+		const raw = fs.readFileSync(monitor.resolvedInstructionsPath, "utf-8");
+		return JSON.parse(raw);
+	} catch {
+		return [];
+	}
+}
+
+function formatInstructionsForPrompt(instructions: MonitorInstruction[]): string {
+	if (instructions.length === 0) return "";
+	const lines = instructions.map((i) => `- ${i.text}`).join("\n");
+	return `\nOperating instructions from the user (follow these strictly):\n${lines}\n`;
+}
+
+function renderTemplate(monitor: Monitor, branch: SessionEntry[]): string | null {
+	const patterns = loadPatterns(monitor);
+	if (patterns.length === 0) return null;
+
+	const instructions = loadInstructions(monitor);
 
 	const collected: Record<string, string> = {};
-	for (const key of monitor.context) {
+	for (const key of monitor.classify.context) {
 		const fn = collectors[key];
 		if (fn) collected[key] = fn(branch);
 	}
 
-	return monitor.template.replace(/\{(\w+)\}/g, (match, key: string) => {
-		if (key === "patterns") return patterns;
-		if (key === "instructions") return instructionsBlock;
+	return monitor.classify.prompt.replace(/\{(\w+)\}/g, (match, key: string) => {
+		if (key === "patterns") return formatPatternsForPrompt(patterns);
+		if (key === "instructions") return formatInstructionsForPrompt(instructions);
 		if (key === "iteration") return String(monitor.whileCount);
 		return collected[key] ?? match;
 	});
@@ -438,12 +518,12 @@ function parseModelSpec(spec: string): { provider: string; modelId: string } {
 }
 
 async function classifyPrompt(ctx: ExtensionContext, monitor: Monitor, prompt: string, signal?: AbortSignal): Promise<ClassifyResult> {
-	const { provider, modelId } = parseModelSpec(monitor.model);
+	const { provider, modelId } = parseModelSpec(monitor.classify.model);
 	const model = ctx.modelRegistry.find(provider, modelId);
-	if (!model) throw new Error(`Model ${monitor.model} not found`);
+	if (!model) throw new Error(`Model ${monitor.classify.model} not found`);
 
 	const apiKey = await ctx.modelRegistry.getApiKey(model);
-	if (!apiKey) throw new Error(`No API key for ${monitor.model}`);
+	if (!apiKey) throw new Error(`No API key for ${monitor.classify.model}`);
 
 	const response: AssistantMessage = await complete(
 		model as Model<Api>,
@@ -455,18 +535,94 @@ async function classifyPrompt(ctx: ExtensionContext, monitor: Monitor, prompt: s
 }
 
 // =============================================================================
-// Pattern learning
+// Pattern learning (JSON)
 // =============================================================================
 
-function learnPattern(patternsFile: string, pattern: string): void {
-	const current = fs.readFileSync(patternsFile, "utf-8");
-	const lines = current.trim().split("\n");
-	let lastNum = 0;
-	for (const line of lines) {
-		const m = line.match(/^(\d+)\./);
-		if (m) lastNum = Math.max(lastNum, parseInt(m[1]));
+function learnPattern(monitor: Monitor, description: string): void {
+	const patterns = loadPatterns(monitor);
+	const id = description.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60);
+
+	// dedup by description
+	if (patterns.some((p) => p.description === description)) return;
+
+	patterns.push({
+		id,
+		description,
+		severity: "warning",
+		source: "learned",
+		learned_at: new Date().toISOString(),
+	});
+
+	try {
+		fs.writeFileSync(monitor.resolvedPatternsPath, JSON.stringify(patterns, null, 2) + "\n");
+	} catch (err) {
+		console.error(`[${monitor.name}] Failed to write pattern: ${err instanceof Error ? err.message : err}`);
 	}
-	fs.appendFileSync(patternsFile, `${lastNum + 1}. ${pattern}\n`);
+}
+
+// =============================================================================
+// Action execution — write findings to JSON files
+// =============================================================================
+
+function generateFindingId(monitorName: string, description: string): string {
+	return `${monitorName}-${Date.now().toString(36)}`;
+}
+
+function executeWriteAction(
+	monitor: Monitor,
+	action: MonitorAction,
+	result: ClassifyResult,
+): void {
+	if (!action.write) return;
+
+	const writeCfg = action.write;
+	const filePath = path.isAbsolute(writeCfg.path)
+		? writeCfg.path
+		: path.resolve(process.cwd(), writeCfg.path);
+
+	// Build the entry from template, substituting placeholders
+	const findingId = generateFindingId(monitor.name, result.description ?? "unknown");
+	const entry: Record<string, unknown> = {};
+	for (const [key, tmpl] of Object.entries(writeCfg.template)) {
+		entry[key] = String(tmpl)
+			.replace(/\{finding_id\}/g, findingId)
+			.replace(/\{description\}/g, result.description ?? "Issue detected")
+			.replace(/\{severity\}/g, "warning")
+			.replace(/\{monitor_name\}/g, monitor.name)
+			.replace(/\{timestamp\}/g, new Date().toISOString());
+	}
+
+	// Read existing file or create structure
+	let data: Record<string, unknown> = {};
+	try {
+		data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+	} catch {
+		// file doesn't exist or is invalid — create fresh
+	}
+
+	const arrayField = writeCfg.array_field;
+	if (!Array.isArray(data[arrayField])) {
+		data[arrayField] = [];
+	}
+	const arr = data[arrayField] as Record<string, unknown>[];
+
+	if (writeCfg.merge === "upsert") {
+		const idx = arr.findIndex((item) => item.id === entry.id);
+		if (idx !== -1) {
+			arr[idx] = entry;
+		} else {
+			arr.push(entry);
+		}
+	} else {
+		arr.push(entry);
+	}
+
+	try {
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
+	} catch (err) {
+		console.error(`[${monitor.name}] Failed to write to ${filePath}: ${err instanceof Error ? err.message : err}`);
+	}
 }
 
 // =============================================================================
@@ -484,7 +640,7 @@ async function activate(
 	if (monitor.dismissed) return;
 
 	// check excludes
-	for (const ex of monitor.excludes) {
+	for (const ex of monitor.classify.excludes) {
 		if (steeredThisTurn.has(ex)) return;
 	}
 
@@ -529,36 +685,49 @@ async function activate(
 	monitor.lastUserText = currentUserText;
 
 	if (result.verdict === "clean") {
+		const cleanAction = monitor.actions.on_clean;
+		if (cleanAction) {
+			executeWriteAction(monitor, cleanAction, result);
+		}
 		monitor.whileCount = 0;
 		updateStatus();
 		return;
 	}
 
-	// learn
-	if (result.verdict === "new" && result.newPattern) {
-		learnPattern(monitor.patternsFile, result.newPattern);
+	// Determine which action to execute
+	const action = result.verdict === "new" ? monitor.actions.on_new : monitor.actions.on_flag;
+	if (!action) return;
+
+	// Learn new pattern
+	if (result.verdict === "new" && result.newPattern && action.learn_pattern) {
+		learnPattern(monitor, result.newPattern);
 	}
 
-	// steer
-	const description = result.description ?? "Issue detected";
-	const annotation = result.verdict === "new" ? " — new pattern learned" : "";
-	const details: MonitorMessageDetails = {
-		monitorName: monitor.name,
-		verdict: result.verdict,
-		description,
-		steer: monitor.steer,
-		whileCount: monitor.whileCount + 1,
-		ceiling: monitor.ceiling,
-	};
-	pi.sendMessage<MonitorMessageDetails>(
-		{
-			customType: "monitor-steer",
-			content: `[${monitor.name}] ${description}${annotation}. ${monitor.steer}`,
-			display: true,
-			details,
-		},
-		{ deliverAs: "steer", triggerTurn: true },
-	);
+	// Execute write action (findings to JSON file)
+	executeWriteAction(monitor, action, result);
+
+	// Steer (inject message into conversation) — only for main scope
+	if (action.steer && monitor.scope.target === "main") {
+		const description = result.description ?? "Issue detected";
+		const annotation = result.verdict === "new" ? " — new pattern learned" : "";
+		const details: MonitorMessageDetails = {
+			monitorName: monitor.name,
+			verdict: result.verdict,
+			description,
+			steer: action.steer,
+			whileCount: monitor.whileCount + 1,
+			ceiling: monitor.ceiling,
+		};
+		pi.sendMessage<MonitorMessageDetails>(
+			{
+				customType: "monitor-steer",
+				content: `[${monitor.name}] ${description}${annotation}. ${action.steer}`,
+				display: true,
+				details,
+			},
+			{ deliverAs: "steer", triggerTurn: true },
+		);
+	}
 
 	monitor.whileCount++;
 	steeredThisTurn.add(monitor.name);
@@ -572,7 +741,6 @@ async function escalate(monitor: Monitor, pi: ExtensionAPI, ctx: ExtensionContex
 		return;
 	}
 
-	// ask
 	if (ctx.hasUI) {
 		const choice = await ctx.ui.confirm(
 			`[${monitor.name}] Steered ${monitor.ceiling} times`,
@@ -584,7 +752,6 @@ async function escalate(monitor: Monitor, pi: ExtensionAPI, ctx: ExtensionContex
 			return;
 		}
 	}
-	// if confirmed or no UI, reset and allow one more cycle
 	monitor.whileCount = 0;
 }
 
@@ -593,15 +760,11 @@ async function escalate(monitor: Monitor, pi: ExtensionAPI, ctx: ExtensionContex
 // =============================================================================
 
 export default function (pi: ExtensionAPI) {
-	// seed example monitors on first run if none exist
 	const seeded = seedExamples();
 
 	const monitors = discoverMonitors();
 	if (monitors.length === 0) return;
 
-	// --- status line ---
-	// Cached reference to ctx for status updates from non-event contexts.
-	// Set on session_start, used by updateStatus closure.
 	let statusCtx: ExtensionContext | undefined;
 
 	function updateStatus(): void {
@@ -626,7 +789,7 @@ export default function (pi: ExtensionAPI) {
 		statusCtx.ui.setStatus("monitors", `${theme.fg("dim", "monitors:")}${parts.join(" ")}`);
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (_event: unknown, ctx: ExtensionContext) => {
 		statusCtx = ctx;
 		if (seeded > 0 && ctx.hasUI) {
 			const dir = resolveProjectMonitorsDir();
@@ -642,7 +805,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerMessageRenderer<MonitorMessageDetails>("monitor-steer", (message, { expanded }, theme) => {
 		const details = message.details;
 		if (!details) {
-			const box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
+			const box = new Box(1, 1, (t: string) => theme.bg("customMessageBg", t));
 			box.addChild(new Text(String(message.content), 0, 0));
 			return box;
 		}
@@ -664,13 +827,12 @@ export default function (pi: ExtensionAPI) {
 			text += `\n${theme.fg("dim", `verdict: ${details.verdict}`)}`;
 		}
 
-		const box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
+		const box = new Box(1, 1, (t: string) => theme.bg("customMessageBg", t));
 		box.addChild(new Text(text, 0, 0));
 		return box;
 	});
 
 	// --- abort support ---
-	// Cancel in-flight classification calls when the user aborts the agent
 	pi.on("agent_end", async () => {
 		pi.events.emit("monitors:abort", undefined);
 	});
@@ -682,10 +844,9 @@ export default function (pi: ExtensionAPI) {
 	// group monitors by validated event
 	const byEvent = new Map<MonitorEvent, Monitor[]>();
 	for (const m of monitors) {
-		const event = m.event as MonitorEvent; // validated in parseMonitorFile
-		const list = byEvent.get(event) ?? [];
+		const list = byEvent.get(m.event) ?? [];
 		list.push(m);
-		byEvent.set(event, list);
+		byEvent.set(m.event, list);
 	}
 
 	// wire event handlers
@@ -694,7 +855,7 @@ export default function (pi: ExtensionAPI) {
 			for (const m of group) {
 				pi.registerCommand(m.name, {
 					description: m.description || `Run ${m.name} monitor`,
-					handler: async (_args, ctx) => {
+					handler: async (_args: string, ctx: ExtensionContext) => {
 						const branch = ctx.sessionManager.getBranch();
 						await activate(m, pi, ctx, branch, steeredThisTurn, updateStatus);
 					},
@@ -728,14 +889,15 @@ export default function (pi: ExtensionAPI) {
 	// /monitors command — list all monitors and their state
 	pi.registerCommand("monitors", {
 		description: "List active monitors and their state",
-		handler: async (_args, ctx) => {
+		handler: async (_args: string, ctx: ExtensionContext) => {
 			const lines = monitors.map((m) => {
 				const state = m.dismissed
 					? "dismissed"
 					: m.whileCount > 0
 						? `engaged (${m.whileCount}/${m.ceiling})`
 						: "idle";
-				return `${m.name} [${m.event}${m.when !== "always" ? `, when: ${m.when}` : ""}] — ${state}`;
+				const scope = m.scope.target !== "main" ? ` [scope:${m.scope.target}]` : "";
+				return `${m.name} [${m.event}${m.when !== "always" ? `, when: ${m.when}` : ""}]${scope} — ${state}`;
 			});
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
@@ -743,22 +905,33 @@ export default function (pi: ExtensionAPI) {
 
 	// per-monitor /{name} command for show/set instructions
 	for (const m of monitors) {
-		// skip if the monitor itself is a command (already registered above)
 		if (m.event === "command") continue;
 
 		pi.registerCommand(m.name, {
 			description: `Direct the ${m.name} monitor`,
-			handler: async (args, ctx) => {
+			handler: async (args: string, ctx: ExtensionContext) => {
 				if (!args?.trim()) {
-					let patterns = "";
-					try { patterns = fs.readFileSync(m.patternsFile, "utf-8"); } catch { patterns = "(missing)"; }
-					let instructions = "";
-					try { instructions = fs.readFileSync(m.instructionsFile, "utf-8"); } catch { /* optional */ }
-					ctx.ui.notify(`[${m.name}]\nInstructions:\n${instructions || "(none)"}\nPatterns:\n${patterns}`, "info");
+					const patterns = loadPatterns(m);
+					const instructions = loadInstructions(m);
+					const patternText = patterns.length > 0
+						? patterns.map((p) => `[${p.severity ?? "?"}] ${p.description}`).join("\n")
+						: "(none)";
+					const instructionText = instructions.length > 0
+						? instructions.map((i) => `- ${i.text}`).join("\n")
+						: "(none)";
+					ctx.ui.notify(`[${m.name}]\nInstructions:\n${instructionText}\nPatterns:\n${patternText}`, "info");
 					return;
 				}
-				fs.appendFileSync(m.instructionsFile, `- ${args.trim()}\n`);
-				ctx.ui.notify(`[${m.name}] Incorporated: ${args.trim()}`, "info");
+
+				// Add instruction
+				const instructions = loadInstructions(m);
+				instructions.push({ text: args.trim(), added_at: new Date().toISOString() });
+				try {
+					fs.writeFileSync(m.resolvedInstructionsPath, JSON.stringify(instructions, null, 2) + "\n");
+					ctx.ui.notify(`[${m.name}] Incorporated: ${args.trim()}`, "info");
+				} catch (err) {
+					ctx.ui.notify(`[${m.name}] Failed to save instruction: ${err instanceof Error ? err.message : err}`, "error");
+				}
 			},
 		});
 	}
