@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.1.1
+
+[compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.0...v0.1.1)
+
+### 📖 Documentation
+
+- Add CLAUDE.md with project conventions ([5f5b427](https://github.com/davidorex/pi-behavior-monitors/commit/5f5b427))
+- Expand SKILL.md to cover full runtime behavior and bundled monitors ([5c9980d](https://github.com/davidorex/pi-behavior-monitors/commit/5c9980d))
+
+### 🏡 Chore
+
+- Add npm publish metadata, files whitelist, and normalize repository URL ([4b3f1f4](https://github.com/davidorex/pi-behavior-monitors/commit/4b3f1f4))
+- Add .gitignore, remove runtime .workflow/ from tracking ([c1d4ae5](https://github.com/davidorex/pi-behavior-monitors/commit/c1d4ae5))
+
+### ❤️ Contributors
+
+- David Ryan <davidryan@gmail.com>
+
 ## v0.1.0
 
 Initial release.
