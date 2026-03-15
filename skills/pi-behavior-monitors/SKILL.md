@@ -14,13 +14,32 @@ write structured findings to JSON files for downstream consumption.
 </objective>
 
 <monitor_locations>
-Monitors are discovered from:
+Monitors are discovered from two locations, checked in order:
 
-- Project: `.pi/monitors/*.monitor.json` (walks up from cwd to find `.pi/`)
-- Global: `~/.pi/agent/monitors/*.monitor.json`
+1. **Project**: `.pi/monitors/*.monitor.json` (walks up from cwd to find `.pi/`)
+2. **Global**: `~/.pi/agent/monitors/*.monitor.json` (via `getAgentDir()`)
 
-Project monitors take precedence over global monitors with the same name.
+Project monitors take precedence — if a project monitor has the same `name` as a global
+one, the global monitor is ignored. The extension silently exits if zero monitors are
+discovered after checking both locations.
 </monitor_locations>
+
+<seeding>
+On first run in a project, the extension seeds bundled example monitors into
+`.pi/monitors/` if ALL of the following are true:
+
+- `discoverMonitors()` finds zero monitors (neither project nor global)
+- The `examples/` directory exists in the extension package
+- The target `.pi/monitors/` directory contains no `.monitor.json` files
+
+Seeding copies all `.json` files from `examples/` (monitor definitions, patterns, and
+instructions files) into `.pi/monitors/`. It skips files that already exist at the
+destination. The user is notified: "Edit or delete them to customize."
+
+To customize seeded monitors, edit the copies in `.pi/monitors/` directly. To remove a
+bundled monitor, delete its three files (`.monitor.json`, `.patterns.json`,
+`.instructions.json`). Seeding never re-runs once any monitors exist.
+</seeding>
 
 <file_structure>
 Each monitor is a triad of JSON files sharing a name prefix:
@@ -31,6 +50,9 @@ Each monitor is a triad of JSON files sharing a name prefix:
 ├── fragility.patterns.json      # Known patterns (JSON array, grows automatically)
 ├── fragility.instructions.json  # User corrections (JSON array, optional)
 ```
+
+The instructions file is optional. If omitted, the extension defaults the path to
+`${name}.instructions.json` and treats a missing file as an empty array.
 </file_structure>
 
 <monitor_definition>
@@ -94,8 +116,8 @@ A `.monitor.json` file conforms to `schemas/monitor.schema.json`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `name` | (required) | Monitor identifier. Must be unique. |
-| `description` | `""` | Human-readable description. |
+| `name` | (required) | Monitor identifier. Must be unique across project and global. |
+| `description` | `""` | Human-readable description. Also used as command description for `event: command` monitors. |
 | `event` | `message_end` | When to fire: `message_end`, `turn_end`, `agent_end`, or `command`. |
 | `when` | `always` | Activation condition (see below). |
 | `ceiling` | `5` | Max consecutive steers before escalation. |
@@ -110,51 +132,56 @@ A `.monitor.json` file conforms to `schemas/monitor.schema.json`:
 | `scope.filter.step_name` | — | Glob pattern for workflow step names. |
 | `scope.filter.workflow` | — | Glob pattern for workflow names. |
 
-Steering only fires for `main` scope. Non-main scopes write to JSON only.
+Steering (injecting messages into the conversation) only fires for `main` scope.
+Non-main scopes can still write findings to JSON files.
 
 **Classify block:**
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `classify.model` | `claude-sonnet-4-20250514` | Model for classification. Supports `provider/model`. |
-| `classify.context` | `[tool_results, assistant_text]` | Conversation parts to collect. |
-| `classify.excludes` | `[]` | Monitor names to skip if they already steered this turn. |
+| `classify.model` | `claude-sonnet-4-20250514` | Model for classification. Plain model ID uses `anthropic` provider. Use `provider/model` for other providers. |
+| `classify.context` | `["tool_results", "assistant_text"]` | Conversation parts to collect. |
+| `classify.excludes` | `[]` | Monitor names — skip activation if any of these already steered this turn. |
 | `classify.prompt` | (required) | Classification prompt template with `{placeholders}`. |
 
 **Actions block** — per verdict (`on_flag`, `on_new`, `on_clean`):
 
 | Field | Description |
 |-------|-------------|
-| `steer` | Message to inject into conversation. `null` = no steering. |
-| `write.path` | JSON file to write findings to. |
-| `write.merge` | `append` (add to array) or `upsert` (update by id). |
-| `write.array_field` | Which field in target JSON holds the array. |
+| `steer` | Message to inject into conversation. `null` = no steering. Only effective for `scope.target: "main"`. |
+| `write.path` | JSON file to write findings to. Relative paths resolve from `process.cwd()`, not from the monitor directory. |
+| `write.merge` | `append` (add to array) or `upsert` (update by matching `id` field). |
+| `write.array_field` | Which field in target JSON holds the array (e.g. `"gaps"`, `"findings"`). |
 | `write.template` | Template mapping with `{finding_id}`, `{description}`, `{severity}`, `{monitor_name}`, `{timestamp}`. |
+| `write.schema` | Optional schema path for documentation. Not enforced at runtime. |
 | `learn_pattern` | If true, add new pattern to patterns file on `new` verdict. |
+
+`on_clean` can be configured with a `write` action to log clean verdicts. Setting it to
+`null` means no action on clean (the default behavior).
 </fields>
 
 <when_conditions>
 - `always` — fire every time the event occurs
-- `has_tool_results` — fire only if tool results are present
-- `has_file_writes` — fire only if `write` or `edit` was called
-- `has_bash` — fire only if `bash` was called
-- `tool(name)` — fire only if a specific tool was called
-- `every(N)` — fire every Nth activation within the same user prompt
+- `has_tool_results` — fire only if tool results are present since last user message
+- `has_file_writes` — fire only if `write` or `edit` tool was called since last user message
+- `has_bash` — fire only if `bash` tool was called since last user message
+- `tool(name)` — fire only if a specific named tool was called since last user message
+- `every(N)` — fire every Nth activation within the same user prompt (counter resets when user text changes)
 </when_conditions>
 
 <context_collectors>
-| Collector | Placeholder | What it collects |
-|-----------|-------------|------------------|
-| `user_text` | `{user_text}` | Most recent user message text |
-| `assistant_text` | `{assistant_text}` | Most recent assistant message text |
-| `tool_results` | `{tool_results}` | Last 5 tool results with tool name and error status |
-| `tool_calls` | `{tool_calls}` | Last 20 tool calls and results |
-| `custom_messages` | `{custom_messages}` | Custom extension messages since last user message |
+| Collector | Placeholder | What it collects | Limits |
+|-----------|-------------|------------------|--------|
+| `user_text` | `{user_text}` | Most recent user message text (walks back past assistant to find preceding user message) | — |
+| `assistant_text` | `{assistant_text}` | Most recent assistant message text | — |
+| `tool_results` | `{tool_results}` | Tool results with tool name and error status | Last 5, each truncated to 2000 chars |
+| `tool_calls` | `{tool_calls}` | Tool calls and their results interleaved | Last 20, each truncated to 2000 chars |
+| `custom_messages` | `{custom_messages}` | Custom extension messages since last user message | — |
 
-Built-in placeholders (always available):
-- `{patterns}` — formatted from patterns JSON (numbered list with severity)
-- `{instructions}` — formatted from instructions JSON (bulleted list with preamble)
-- `{iteration}` — current consecutive steer count
+Built-in placeholders (always available, not listed in `classify.context`):
+- `{patterns}` — formatted from patterns JSON as numbered list: `1. [severity] description`
+- `{instructions}` — formatted from instructions JSON as bulleted list with preamble "Operating instructions from the user (follow these strictly):" — empty string if no instructions
+- `{iteration}` — current consecutive steer count (0-indexed)
 </context_collectors>
 
 <patterns_file>
@@ -167,6 +194,7 @@ JSON array conforming to `schemas/monitor-pattern.schema.json`:
     "description": "Silently catching exceptions with empty catch blocks",
     "severity": "error",
     "category": "error-handling",
+    "examples": ["try { ... } catch {}"],
     "source": "bundled"
   },
   {
@@ -179,7 +207,21 @@ JSON array conforming to `schemas/monitor-pattern.schema.json`:
 ]
 ```
 
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | yes | Stable identifier for dedup. Auto-generated for learned patterns: lowercased, non-alphanumeric replaced with hyphens, truncated to 60 chars. |
+| `description` | yes | What this pattern detects. Used for dedup (exact match) when learning. |
+| `severity` | no | `"error"`, `"warning"`, or `"info"`. Defaults to `"warning"` in prompt formatting. |
+| `category` | no | Grouping key (e.g. `"error-handling"`, `"avoidance"`, `"deferral"`). |
+| `examples` | no | Example manifestations. Stored but not surfaced in classification prompts. |
+| `source` | no | `"bundled"`, `"learned"`, or `"user"`. Learned patterns are tagged `"learned"`. |
+| `learned_at` | no | ISO timestamp for learned patterns. |
+
 Patterns grow automatically when `learn_pattern: true` and a `NEW:` verdict is returned.
+Dedup is by exact `description` match — duplicates are silently skipped.
+
+**Critical**: If the patterns array is empty (file missing, empty array, or unparseable),
+classification is skipped entirely for that activation. A monitor with no patterns does nothing.
 </patterns_file>
 
 <instructions_file>
@@ -192,26 +234,104 @@ JSON array of user corrections:
 ]
 ```
 
-Add via slash command: `/<monitor-name> <instruction>`
+Add via slash command: `/<monitor-name> <instruction text>`
+
+Instructions are injected into the classification prompt under a preamble
+"Operating instructions from the user (follow these strictly):" — only if the array is
+non-empty. An empty array or missing file produces no instructions block in the prompt.
 </instructions_file>
 
 <verdict_format>
 The classification LLM must respond with one of:
 
-- `CLEAN` — no issue detected. Resets consecutive steer counter.
-- `FLAG:<description>` — known pattern matched. Triggers action.
-- `NEW:<pattern>|<description>` — novel issue. Pattern learned if `learn_pattern: true`, then triggers action.
+- `CLEAN` — no issue detected. Resets consecutive steer counter to 0.
+- `FLAG:<description>` — known pattern matched. Triggers `on_flag` action.
+- `NEW:<pattern>|<description>` — novel issue. The text before `|` becomes the learned pattern description; the text after `|` becomes the finding description. If no `|` is present, the full text after `NEW:` is used for both. Triggers `on_new` action.
+
+Any response that does not start with `CLEAN`, `FLAG:`, or `NEW:` is treated as `CLEAN`.
+
+Classification calls use `maxTokens: 150`.
 </verdict_format>
+
+<runtime_behavior>
+
+**Dedup**: A monitor will not re-classify the same user text. Once a user message has been
+classified, the monitor skips until the user text changes. This prevents redundant
+side-channel LLM calls within the same user turn.
+
+**Ceiling and escalation**: After `ceiling` consecutive steers (flag/new verdicts without
+an intervening clean), the monitor escalates. With `escalate: "ask"`, the user is prompted
+to continue or dismiss. With `escalate: "dismiss"`, the monitor is silently dismissed for
+the session. A `CLEAN` verdict resets the consecutive steer counter.
+
+**Turn exclusion**: The `excludes` array prevents double-steering. If monitor A steers in
+a turn, and monitor B has `"excludes": ["A"]`, monitor B skips that turn. Exclusion tracking
+resets at `turn_start`.
+
+**Abort**: Classification calls are aborted when the agent ends (via `agent_end` event).
+Aborted classifications produce no verdict and no action.
+
+**Write action**: Relative `write.path` values resolve from `process.cwd()`, not from the
+monitor directory. Parent directories are created automatically. If the target file doesn't
+exist or is unparseable, a fresh object is created. The `upsert` merge strategy matches on
+the `id` field of array entries.
+</runtime_behavior>
 
 <commands>
 | Command | Description |
 |---------|-------------|
-| `/monitors` | List all monitors, their scope, and state (idle/engaged/dismissed) |
-| `/<name>` | Show monitor's patterns and instructions |
-| `/<name> <text>` | Add instruction to calibrate the monitor |
+| `/monitors` | List all monitors with event, when condition, scope, and state (idle/engaged/dismissed) |
+| `/<name>` | For non-command monitors: show the monitor's current patterns and instructions |
+| `/<name> <text>` | For non-command monitors: add an instruction to calibrate the classifier |
+| `/<name>` | For `event: command` monitors: run the monitor on demand against current conversation state |
 
-For `event: command` monitors, `/<name>` runs the monitor on demand.
+The `/<name>` command behaves differently based on the monitor's `event` type:
+- `event: "command"` monitors register `/<name>` as a trigger that runs classification
+- All other monitors register `/<name>` as a show/set-instructions interface
 </commands>
+
+<bundled_monitors>
+Three example monitors ship in `examples/` and are seeded on first run:
+
+**fragility** (`message_end`, `when: has_tool_results`)
+Watches for unaddressed fragilities after tool use — errors, warnings, or broken state the
+agent noticed but chose not to fix. Steers with "Fix the issue you left behind." Writes
+findings to `.workflow/gaps.json` under `category: "fragility"`. Excludes: none. Ceiling: 5.
+12 bundled patterns across categories: avoidance (dismiss-preexisting, not-my-change,
+blame-environment, workaround-over-root-cause, elaborate-workaround-for-fixable),
+error-handling (empty-catch, happy-path-only, early-return-on-unexpected,
+undocumented-delegation, silent-fallback), deferral (todo-instead-of-fix,
+prose-without-action).
+
+**hedge** (`turn_end`, `when: always`)
+Detects when the assistant deviates from what the user actually said — substituting
+questions, projecting intent, or deflecting instead of answering. Steers with "Address
+what the user actually said." Does not write to files (steer-only). Excludes: `["fragility"]`
+(skips if fragility already steered this turn). Ceiling: 3.
+8 bundled patterns across categories: substitution (rephrase-question, reinterpret-words),
+projection (assume-intent, attribute-position), augmentation (add-questions),
+deflection (ask-permission, qualify-yesno, counter-question).
+
+**work-quality** (`command`, `when: always`)
+On-demand work quality analysis invoked via `/work-quality`. Analyzes user request, tool
+calls, and assistant response for quality issues. Writes findings to `.workflow/gaps.json`
+under `category: "work-quality"`. Ceiling: 3.
+11 bundled patterns across categories: methodology (trial-and-error, symptom-fix,
+double-edit, edit-without-read, insanity-retry, no-plan), verification (no-verify),
+scope (excessive-changes, wrong-problem), quality (copy-paste), cleanup (debug-artifacts).
+</bundled_monitors>
+
+<disabling_monitors>
+To disable a monitor:
+- Delete its `.monitor.json` file (and optionally its `.patterns.json` and `.instructions.json`)
+- Or empty its patterns array — a monitor with zero patterns skips classification entirely
+
+To disable all monitoring: remove all `.monitor.json` files from `.pi/monitors/` and
+`~/.pi/agent/monitors/`. The extension exits silently when zero monitors are discovered.
+
+To temporarily silence a monitor during a session: let it hit its ceiling and dismiss it
+(if `escalate: "ask"`) or set `escalate: "dismiss"` for automatic silencing at ceiling.
+</disabling_monitors>
 
 <example_creating>
 1. Create `.pi/monitors/naming.monitor.json`:
@@ -261,7 +381,10 @@ For `event: command` monitors, `/<name>` runs the monitor on demand.
 <success_criteria>
 - Monitor `.monitor.json` validates against `schemas/monitor.schema.json`
 - Patterns `.patterns.json` validates against `schemas/monitor-pattern.schema.json`
-- Classification prompt includes `{patterns}` and verdict format instructions
-- Actions specify both `steer` (for main scope) and `write` (for JSON output) where appropriate
-- Scope correctly targets main vs subagent vs workflow observations
+- Patterns array is non-empty (empty patterns = monitor does nothing)
+- Classification prompt includes `{patterns}` placeholder and verdict format instructions (CLEAN/FLAG/NEW)
+- Actions specify `steer` for `scope.target: "main"` monitors, `write` for findings output
+- `write.path` is set relative to project cwd, not monitor directory
+- `excludes` lists monitors that should not double-steer in the same turn
+- Instructions file exists (even if empty `[]`) to enable `/<name> <text>` calibration
 </success_criteria>
