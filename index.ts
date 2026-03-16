@@ -479,7 +479,7 @@ function saveInstructions(monitor: Monitor, instructions: MonitorInstruction[]):
 // /monitors command — parsing and handlers
 // =============================================================================
 
-type MonitorsCommand =
+export type MonitorsCommand =
 	| { type: "list" }
 	| { type: "on" }
 	| { type: "off" }
@@ -493,7 +493,7 @@ type MonitorsCommand =
 	| { type: "reset"; name: string }
 	| { type: "error"; message: string };
 
-function parseMonitorsArgs(args: string, knownNames: Set<string>): MonitorsCommand {
+export function parseMonitorsArgs(args: string, knownNames: Set<string>): MonitorsCommand {
 	const trimmed = args.trim();
 	if (!trimmed) return { type: "list" };
 
@@ -671,7 +671,7 @@ function renderTemplate(monitor: Monitor, branch: SessionEntry[]): string | null
 // Classification
 // =============================================================================
 
-function parseVerdict(raw: string): ClassifyResult {
+export function parseVerdict(raw: string): ClassifyResult {
 	const text = raw.trim();
 	if (text.startsWith("CLEAN")) return { verdict: "clean" };
 	if (text.startsWith("NEW:")) {
@@ -684,7 +684,7 @@ function parseVerdict(raw: string): ClassifyResult {
 	return { verdict: "clean" };
 }
 
-function parseModelSpec(spec: string): { provider: string; modelId: string } {
+export function parseModelSpec(spec: string): { provider: string; modelId: string } {
 	const slashIndex = spec.indexOf("/");
 	if (slashIndex !== -1) {
 		return { provider: spec.slice(0, slashIndex), modelId: spec.slice(slashIndex + 1) };
@@ -739,7 +739,7 @@ function learnPattern(monitor: Monitor, description: string): void {
 // Action execution — write findings to JSON files
 // =============================================================================
 
-function generateFindingId(monitorName: string, description: string): string {
+export function generateFindingId(monitorName: string, description: string): string {
 	return `${monitorName}-${Date.now().toString(36)}`;
 }
 

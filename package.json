@@ -30,6 +30,8 @@
     ]
   },
   "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
     "release": "npx changelogen --bump --release",
     "release:patch": "npx changelogen --bump --release --patch",
     "release:minor": "npx changelogen --bump --release --minor",
@@ -41,5 +43,8 @@
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
   }
 }
