@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.1.2
+
+[compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.1...v0.1.2)
+
+### 🚀 Enhancements
+
+- Unify monitor management under /monitors command with subcommand routing ([dbffaa0](https://github.com/davidorex/pi-behavior-monitors/commit/dbffaa0))
+- Add vitest test suite for pure functions in index.ts ([fed0d75](https://github.com/davidorex/pi-behavior-monitors/commit/fed0d75))
+
+### 🩹 Fixes
+
+- Address conformance audit findings — unused param, session_switch, headless escalate ([f2d3baa](https://github.com/davidorex/pi-behavior-monitors/commit/f2d3baa))
+
+### 🏡 Chore
+
+- Add .claude/ to gitignore, version conformance audit in docs/ ([d6a8395](https://github.com/davidorex/pi-behavior-monitors/commit/d6a8395))
+
+### ❤️ Contributors
+
+- David Ryan <davidryan@gmail.com>
+
 ## v0.1.1
 
 [compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.0...v0.1.1)
