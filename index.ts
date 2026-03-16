@@ -739,7 +739,7 @@ function learnPattern(monitor: Monitor, description: string): void {
 // Action execution — write findings to JSON files
 // =============================================================================
 
-export function generateFindingId(monitorName: string, description: string): string {
+export function generateFindingId(monitorName: string, _description: string): string {
 	return `${monitorName}-${Date.now().toString(36)}`;
 }
 
@@ -919,6 +919,14 @@ async function escalate(monitor: Monitor, pi: ExtensionAPI, ctx: ExtensionContex
 		return;
 	}
 
+	// In headless mode there is no way to prompt the user, so auto-dismiss
+	// to avoid an infinite classify-reset cycle that can never be resolved.
+	if (!ctx.hasUI) {
+		monitor.dismissed = true;
+		monitor.whileCount = 0;
+		return;
+	}
+
 	if (ctx.hasUI) {
 		const choice = await ctx.ui.confirm(
 			`[${monitor.name}] Steered ${monitor.ceiling} times`,
@@ -982,6 +990,18 @@ export default function (pi: ExtensionAPI) {
 				"info",
 			);
 		}
+		updateStatus();
+	});
+
+	pi.on("session_switch", async (_event: unknown, ctx: ExtensionContext) => {
+		statusCtx = ctx;
+		for (const m of monitors) {
+			m.whileCount = 0;
+			m.dismissed = false;
+			m.lastUserText = "";
+			m.activationCount = 0;
+		}
+		monitorsEnabled = true;
 		updateStatus();
 	});
 
