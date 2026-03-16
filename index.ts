@@ -466,6 +466,181 @@ function loadInstructions(monitor: Monitor): MonitorInstruction[] {
 	}
 }
 
+function saveInstructions(monitor: Monitor, instructions: MonitorInstruction[]): string | null {
+	try {
+		fs.writeFileSync(monitor.resolvedInstructionsPath, JSON.stringify(instructions, null, 2) + "\n");
+		return null;
+	} catch (err) {
+		return err instanceof Error ? err.message : String(err);
+	}
+}
+
+// =============================================================================
+// /monitors command — parsing and handlers
+// =============================================================================
+
+type MonitorsCommand =
+	| { type: "list" }
+	| { type: "on" }
+	| { type: "off" }
+	| { type: "inspect"; name: string }
+	| { type: "rules-list"; name: string }
+	| { type: "rules-add"; name: string; text: string }
+	| { type: "rules-remove"; name: string; index: number }
+	| { type: "rules-replace"; name: string; index: number; text: string }
+	| { type: "patterns-list"; name: string }
+	| { type: "dismiss"; name: string }
+	| { type: "reset"; name: string }
+	| { type: "error"; message: string };
+
+function parseMonitorsArgs(args: string, knownNames: Set<string>): MonitorsCommand {
+	const trimmed = args.trim();
+	if (!trimmed) return { type: "list" };
+
+	const tokens = trimmed.split(/\s+/);
+	const first = tokens[0];
+
+	// global commands (only if not a monitor name)
+	if (!knownNames.has(first)) {
+		if (first === "on") return { type: "on" };
+		if (first === "off") return { type: "off" };
+		return { type: "error", message: `Unknown monitor: ${first}\nAvailable: ${[...knownNames].join(", ")}` };
+	}
+
+	const name = first;
+	if (tokens.length === 1) return { type: "inspect", name };
+
+	const verb = tokens[1];
+
+	if (verb === "rules") {
+		if (tokens.length === 2) return { type: "rules-list", name };
+		const action = tokens[2];
+		if (action === "add") {
+			const text = tokens.slice(3).join(" ");
+			if (!text) return { type: "error", message: "Usage: /monitors <name> rules add <text>" };
+			return { type: "rules-add", name, text };
+		}
+		if (action === "remove") {
+			const n = parseInt(tokens[3]);
+			if (isNaN(n) || n < 1) return { type: "error", message: "Usage: /monitors <name> rules remove <number>" };
+			return { type: "rules-remove", name, index: n };
+		}
+		if (action === "replace") {
+			const n = parseInt(tokens[3]);
+			const text = tokens.slice(4).join(" ");
+			if (isNaN(n) || n < 1 || !text) return { type: "error", message: "Usage: /monitors <name> rules replace <number> <text>" };
+			return { type: "rules-replace", name, index: n, text };
+		}
+		return { type: "error", message: `Unknown rules action: ${action}\nAvailable: add, remove, replace` };
+	}
+
+	if (verb === "patterns") return { type: "patterns-list", name };
+	if (verb === "dismiss") return { type: "dismiss", name };
+	if (verb === "reset") return { type: "reset", name };
+
+	return { type: "error", message: `Unknown subcommand: ${verb}\nAvailable: rules, patterns, dismiss, reset` };
+}
+
+function handleList(
+	monitors: Monitor[],
+	ctx: ExtensionContext,
+	enabled: boolean,
+): void {
+	const header = enabled ? "monitors: ON" : "monitors: OFF (all monitoring paused)";
+	const lines = monitors.map((m) => {
+		const state = m.dismissed
+			? "dismissed"
+			: m.whileCount > 0
+				? `engaged (${m.whileCount}/${m.ceiling})`
+				: "idle";
+		const scope = m.scope.target !== "main" ? ` [scope:${m.scope.target}]` : "";
+		return `  ${m.name} [${m.event}${m.when !== "always" ? `, when: ${m.when}` : ""}]${scope} — ${state}`;
+	});
+	ctx.ui.notify(`${header}\n${lines.join("\n")}`, "info");
+}
+
+function handleInspect(monitor: Monitor, ctx: ExtensionContext): void {
+	const rules = loadInstructions(monitor);
+	const patterns = loadPatterns(monitor);
+	const state = monitor.dismissed
+		? "dismissed"
+		: monitor.whileCount > 0
+			? `engaged (${monitor.whileCount}/${monitor.ceiling})`
+			: "idle";
+	const lines = [
+		`[${monitor.name}] ${monitor.description}`,
+		`event: ${monitor.event}, when: ${monitor.when}, scope: ${monitor.scope.target}`,
+		`state: ${state}, ceiling: ${monitor.ceiling}, escalate: ${monitor.escalate}`,
+		`rules: ${rules.length}, patterns: ${patterns.length}`,
+	];
+	ctx.ui.notify(lines.join("\n"), "info");
+}
+
+function handleRulesList(monitor: Monitor, ctx: ExtensionContext): void {
+	const rules = loadInstructions(monitor);
+	if (rules.length === 0) {
+		ctx.ui.notify(`[${monitor.name}] (no rules)`, "info");
+		return;
+	}
+	const lines = rules.map((r, i) => `${i + 1}. ${r.text}`);
+	ctx.ui.notify(`[${monitor.name}] rules:\n${lines.join("\n")}`, "info");
+}
+
+function handleRulesAdd(monitor: Monitor, ctx: ExtensionContext, text: string): void {
+	const rules = loadInstructions(monitor);
+	rules.push({ text, added_at: new Date().toISOString() });
+	const err = saveInstructions(monitor, rules);
+	if (err) {
+		ctx.ui.notify(`[${monitor.name}] Failed to save: ${err}`, "error");
+	} else {
+		ctx.ui.notify(`[${monitor.name}] Rule added: ${text}`, "info");
+	}
+}
+
+function handleRulesRemove(monitor: Monitor, ctx: ExtensionContext, index: number): void {
+	const rules = loadInstructions(monitor);
+	if (index < 1 || index > rules.length) {
+		ctx.ui.notify(`[${monitor.name}] Invalid index ${index}. Have ${rules.length} rules.`, "error");
+		return;
+	}
+	const removed = rules.splice(index - 1, 1)[0];
+	const err = saveInstructions(monitor, rules);
+	if (err) {
+		ctx.ui.notify(`[${monitor.name}] Failed to save: ${err}`, "error");
+	} else {
+		ctx.ui.notify(`[${monitor.name}] Removed rule ${index}: ${removed.text}`, "info");
+	}
+}
+
+function handleRulesReplace(monitor: Monitor, ctx: ExtensionContext, index: number, text: string): void {
+	const rules = loadInstructions(monitor);
+	if (index < 1 || index > rules.length) {
+		ctx.ui.notify(`[${monitor.name}] Invalid index ${index}. Have ${rules.length} rules.`, "error");
+		return;
+	}
+	const old = rules[index - 1].text;
+	rules[index - 1] = { text, added_at: new Date().toISOString() };
+	const err = saveInstructions(monitor, rules);
+	if (err) {
+		ctx.ui.notify(`[${monitor.name}] Failed to save: ${err}`, "error");
+	} else {
+		ctx.ui.notify(`[${monitor.name}] Replaced rule ${index}:\n  was: ${old}\n  now: ${text}`, "info");
+	}
+}
+
+function handlePatternsList(monitor: Monitor, ctx: ExtensionContext): void {
+	const patterns = loadPatterns(monitor);
+	if (patterns.length === 0) {
+		ctx.ui.notify(`[${monitor.name}] (no patterns — monitor will not classify)`, "info");
+		return;
+	}
+	const lines = patterns.map((p, i) => {
+		const source = p.source ? ` (${p.source})` : "";
+		return `${i + 1}. [${p.severity ?? "warning"}] ${p.description}${source}`;
+	});
+	ctx.ui.notify(`[${monitor.name}] patterns:\n${lines.join("\n")}`, "info");
+}
+
 function formatInstructionsForPrompt(instructions: MonitorInstruction[]): string {
 	if (instructions.length === 0) return "";
 	const lines = instructions.map((i) => `- ${i.text}`).join("\n");
@@ -629,6 +804,8 @@ function executeWriteAction(
 // Activation
 // =============================================================================
 
+let monitorsEnabled = true;
+
 async function activate(
 	monitor: Monitor,
 	pi: ExtensionAPI,
@@ -637,6 +814,7 @@ async function activate(
 	steeredThisTurn: Set<string>,
 	updateStatus: () => void,
 ): Promise<void> {
+	if (!monitorsEnabled) return;
 	if (monitor.dismissed) return;
 
 	// check excludes
@@ -770,6 +948,12 @@ export default function (pi: ExtensionAPI) {
 	function updateStatus(): void {
 		if (!statusCtx?.hasUI) return;
 		const theme = statusCtx.ui.theme;
+
+		if (!monitorsEnabled) {
+			statusCtx.ui.setStatus("monitors", `${theme.fg("dim", "monitors:")}${theme.fg("warning", "OFF")}`);
+			return;
+		}
+
 		const engaged = monitors.filter((m) => m.whileCount > 0 && !m.dismissed);
 		const dismissed = monitors.filter((m) => m.dismissed);
 
@@ -886,53 +1070,77 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	// /monitors command — list all monitors and their state
+	// /monitors command — unified management interface
+	const monitorNames = new Set(monitors.map((m) => m.name));
+	const monitorsByName = new Map(monitors.map((m) => [m.name, m]));
+
 	pi.registerCommand("monitors", {
-		description: "List active monitors and their state",
-		handler: async (_args: string, ctx: ExtensionContext) => {
-			const lines = monitors.map((m) => {
-				const state = m.dismissed
-					? "dismissed"
-					: m.whileCount > 0
-						? `engaged (${m.whileCount}/${m.ceiling})`
-						: "idle";
-				const scope = m.scope.target !== "main" ? ` [scope:${m.scope.target}]` : "";
-				return `${m.name} [${m.event}${m.when !== "always" ? `, when: ${m.when}` : ""}]${scope} — ${state}`;
-			});
-			ctx.ui.notify(lines.join("\n"), "info");
+		description: "Manage behavior monitors",
+		handler: async (args: string, ctx: ExtensionContext) => {
+			const cmd = parseMonitorsArgs(args, monitorNames);
+
+			if (cmd.type === "error") {
+				ctx.ui.notify(cmd.message, "error");
+				return;
+			}
+
+			if (cmd.type === "list") {
+				handleList(monitors, ctx, monitorsEnabled);
+				return;
+			}
+
+			if (cmd.type === "on") {
+				monitorsEnabled = true;
+				updateStatus();
+				ctx.ui.notify("Monitors enabled", "info");
+				return;
+			}
+
+			if (cmd.type === "off") {
+				monitorsEnabled = false;
+				updateStatus();
+				ctx.ui.notify("All monitors paused for this session", "info");
+				return;
+			}
+
+			const monitor = monitorsByName.get(cmd.name);
+			if (!monitor) {
+				ctx.ui.notify(`Unknown monitor: ${cmd.name}`, "error");
+				return;
+			}
+
+			switch (cmd.type) {
+				case "inspect":
+					handleInspect(monitor, ctx);
+					break;
+				case "rules-list":
+					handleRulesList(monitor, ctx);
+					break;
+				case "rules-add":
+					handleRulesAdd(monitor, ctx, cmd.text);
+					break;
+				case "rules-remove":
+					handleRulesRemove(monitor, ctx, cmd.index);
+					break;
+				case "rules-replace":
+					handleRulesReplace(monitor, ctx, cmd.index, cmd.text);
+					break;
+				case "patterns-list":
+					handlePatternsList(monitor, ctx);
+					break;
+				case "dismiss":
+					monitor.dismissed = true;
+					monitor.whileCount = 0;
+					updateStatus();
+					ctx.ui.notify(`[${monitor.name}] Dismissed for this session`, "info");
+					break;
+				case "reset":
+					monitor.dismissed = false;
+					monitor.whileCount = 0;
+					updateStatus();
+					ctx.ui.notify(`[${monitor.name}] Reset`, "info");
+					break;
+			}
 		},
 	});
-
-	// per-monitor /{name} command for show/set instructions
-	for (const m of monitors) {
-		if (m.event === "command") continue;
-
-		pi.registerCommand(m.name, {
-			description: `Direct the ${m.name} monitor`,
-			handler: async (args: string, ctx: ExtensionContext) => {
-				if (!args?.trim()) {
-					const patterns = loadPatterns(m);
-					const instructions = loadInstructions(m);
-					const patternText = patterns.length > 0
-						? patterns.map((p) => `[${p.severity ?? "?"}] ${p.description}`).join("\n")
-						: "(none)";
-					const instructionText = instructions.length > 0
-						? instructions.map((i) => `- ${i.text}`).join("\n")
-						: "(none)";
-					ctx.ui.notify(`[${m.name}]\nInstructions:\n${instructionText}\nPatterns:\n${patternText}`, "info");
-					return;
-				}
-
-				// Add instruction
-				const instructions = loadInstructions(m);
-				instructions.push({ text: args.trim(), added_at: new Date().toISOString() });
-				try {
-					fs.writeFileSync(m.resolvedInstructionsPath, JSON.stringify(instructions, null, 2) + "\n");
-					ctx.ui.notify(`[${m.name}] Incorporated: ${args.trim()}`, "info");
-				} catch (err) {
-					ctx.ui.notify(`[${m.name}] Failed to save instruction: ${err instanceof Error ? err.message : err}`, "error");
-				}
-			},
-		});
-	}
 }

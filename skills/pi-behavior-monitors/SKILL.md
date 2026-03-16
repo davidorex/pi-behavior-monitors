@@ -225,7 +225,7 @@ classification is skipped entirely for that activation. A monitor with no patter
 </patterns_file>
 
 <instructions_file>
-JSON array of user corrections:
+JSON array of user rules (called "instructions" on disk, "rules" in the command surface):
 
 ```json
 [
@@ -234,11 +234,13 @@ JSON array of user corrections:
 ]
 ```
 
-Add via slash command: `/<monitor-name> <instruction text>`
+Manage via `/monitors <name> rules` (list), `/monitors <name> rules add <text>` (add),
+`/monitors <name> rules remove <n>` (remove by number), `/monitors <name> rules replace <n> <text>`
+(replace by number). The LLM can also edit the `.instructions.json` file directly.
 
-Instructions are injected into the classification prompt under a preamble
+Rules are injected into the classification prompt under a preamble
 "Operating instructions from the user (follow these strictly):" — only if the array is
-non-empty. An empty array or missing file produces no instructions block in the prompt.
+non-empty. An empty array or missing file produces no rules block in the prompt.
 </instructions_file>
 
 <verdict_format>
@@ -278,16 +280,24 @@ the `id` field of array entries.
 </runtime_behavior>
 
 <commands>
+All monitor management is through the `/monitors` command:
+
 | Command | Description |
 |---------|-------------|
-| `/monitors` | List all monitors with event, when condition, scope, and state (idle/engaged/dismissed) |
-| `/<name>` | For non-command monitors: show the monitor's current patterns and instructions |
-| `/<name> <text>` | For non-command monitors: add an instruction to calibrate the classifier |
-| `/<name>` | For `event: command` monitors: run the monitor on demand against current conversation state |
+| `/monitors` | List all monitors with global on/off state and per-monitor status |
+| `/monitors on` | Enable all monitoring (session default) |
+| `/monitors off` | Pause all monitoring for this session |
+| `/monitors <name>` | Inspect a monitor: description, event, state, rule count, pattern count |
+| `/monitors <name> rules` | List current rules (numbered) |
+| `/monitors <name> rules add <text>` | Add a rule to calibrate the classifier |
+| `/monitors <name> rules remove <n>` | Remove a rule by number |
+| `/monitors <name> rules replace <n> <text>` | Replace a rule by number |
+| `/monitors <name> patterns` | List current patterns (numbered, with severity and source) |
+| `/monitors <name> dismiss` | Dismiss a monitor for this session |
+| `/monitors <name> reset` | Reset a monitor's state and un-dismiss it |
 
-The `/<name>` command behaves differently based on the monitor's `event` type:
-- `event: "command"` monitors register `/<name>` as a trigger that runs classification
-- All other monitors register `/<name>` as a show/set-instructions interface
+Monitors with `event: "command"` also register `/<name>` as a programmatic trigger
+for other extensions or workflows to invoke classification directly.
 </commands>
 
 <bundled_monitors>
@@ -322,15 +332,19 @@ scope (excessive-changes, wrong-problem), quality (copy-paste), cleanup (debug-a
 </bundled_monitors>
 
 <disabling_monitors>
-To disable a monitor:
+**Session-level** (temporary):
+- `/monitors off` — pauses all monitoring for the current session
+- `/monitors <name> dismiss` — silences a single monitor for the session
+- `/monitors <name> reset` — un-dismisses and resets a monitor's state
+
+**Permanent**:
 - Delete its `.monitor.json` file (and optionally its `.patterns.json` and `.instructions.json`)
 - Or empty its patterns array — a monitor with zero patterns skips classification entirely
+- To disable all monitoring: remove all `.monitor.json` files from `.pi/monitors/` and
+  `~/.pi/agent/monitors/`. The extension exits silently when zero monitors are discovered.
 
-To disable all monitoring: remove all `.monitor.json` files from `.pi/monitors/` and
-`~/.pi/agent/monitors/`. The extension exits silently when zero monitors are discovered.
-
-To temporarily silence a monitor during a session: let it hit its ceiling and dismiss it
-(if `escalate: "ask"`) or set `escalate: "dismiss"` for automatic silencing at ceiling.
+Monitors also auto-silence at their ceiling. With `escalate: "ask"`, the user is prompted
+to continue or dismiss. With `escalate: "dismiss"`, the monitor silences automatically.
 </disabling_monitors>
 
 <example_creating>
@@ -386,5 +400,5 @@ To temporarily silence a monitor during a session: let it hit its ceiling and di
 - Actions specify `steer` for `scope.target: "main"` monitors, `write` for findings output
 - `write.path` is set relative to project cwd, not monitor directory
 - `excludes` lists monitors that should not double-steer in the same turn
-- Instructions file exists (even if empty `[]`) to enable `/<name> <text>` calibration
+- Instructions file exists (even if empty `[]`) to enable `/monitors <name> rules add <text>` calibration
 </success_criteria>
