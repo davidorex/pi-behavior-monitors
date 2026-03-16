@@ -31,6 +31,18 @@ npm run release:major    # force major
 npm run release:push     # git push --follow-tags
 ```
 
+## Publishing to npm
+
+Requires interactive CLI auth — cannot be automated by agents.
+
+```bash
+npm login                # authenticate (interactive, one-time per machine)
+npm publish              # publish current version
+npm pack --dry-run       # preview what would be published (check files whitelist)
+```
+
+The `files` field in package.json controls what's included: `index.ts`, `examples/`, `schemas/`, `skills/`, `README.md`, `CHANGELOG.md`. Everything else (`docs/`, `test/`, `.claude/`, etc.) is excluded.
+
 ## Dependencies
 
 No runtime dependencies. Peer dependencies on pi's bundled packages (`@mariozechner/pi-ai`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `@sinclair/typebox`).
