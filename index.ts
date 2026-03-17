@@ -811,6 +811,7 @@ function executeWriteAction(
 // =============================================================================
 
 let monitorsEnabled = true;
+let pendingAgentEndSteers: BufferedSteer[] = [];
 
 async function activate(
 	monitor: Monitor,
@@ -1067,12 +1068,6 @@ export default function (pi: ExtensionAPI) {
 			);
 		}
 	});
-
-	// --- buffered steers for message_end/turn_end monitors ---
-	// These monitors classify during the agent loop but can't inject steers in time
-	// (pi's async event queue means extension handlers run after the agent loop checks
-	// getSteeringMessages). Buffer steers here, drain at agent_end.
-	let pendingAgentEndSteers: BufferedSteer[] = [];
 
 	// --- per-turn exclusion tracking ---
 	let steeredThisTurn = new Set<string>();
