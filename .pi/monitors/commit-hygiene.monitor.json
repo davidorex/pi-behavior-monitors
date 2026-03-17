@@ -1,0 +1,22 @@
+{
+  "name": "commit-hygiene",
+  "description": "Reminds the agent to commit written files before moving on",
+  "event": "turn_end",
+  "when": "has_file_writes",
+  "scope": { "target": "main" },
+  "classify": {
+    "model": "claude-sonnet-4-20250514",
+    "context": ["tool_calls"],
+    "excludes": ["fragility"],
+    "prompt": "An agent made file changes this turn. Examine whether it also committed them to git.\n\nActions taken:\n{tool_calls}\n\n{instructions}\n\nPatterns to check:\n{patterns}\n\nRules:\n- If the agent wrote/edited files AND ran `git commit` (or `git add` + `git commit`) in the same turn, that is CLEAN.\n- If the agent only staged files (`git add`) without committing, that is FLAG.\n- If the agent wrote/edited files but ran no git commands at all, that is FLAG.\n- If the agent explicitly stated it will commit in the next step as part of a larger sequence, that is CLEAN.\n\nReply CLEAN if files were committed or commitment is clearly imminent.\nReply FLAG:<description> if a known pattern matched.\nReply NEW:<pattern>|<description> if an uncommitted-work issue not covered by existing patterns."
+  },
+  "patterns": { "path": "commit-hygiene.patterns.json", "learn": true },
+  "instructions": { "path": "commit-hygiene.instructions.json" },
+  "actions": {
+    "on_flag": { "steer": "You wrote files but haven't committed. Stage and commit your changes now before moving on." },
+    "on_new": { "steer": "You wrote files but haven't committed. Stage and commit your changes now before moving on.", "learn_pattern": true },
+    "on_clean": null
+  },
+  "ceiling": 3,
+  "escalate": "ask"
+}

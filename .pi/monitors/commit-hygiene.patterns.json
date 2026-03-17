@@ -1,0 +1,30 @@
+[
+  {
+    "id": "write-no-commit",
+    "description": "Wrote or edited files but ran no git commit in the same turn",
+    "severity": "warning",
+    "category": "uncommitted",
+    "source": "bundled"
+  },
+  {
+    "id": "staged-not-committed",
+    "description": "Ran git add but never followed up with git commit",
+    "severity": "warning",
+    "category": "uncommitted",
+    "source": "bundled"
+  },
+  {
+    "id": "deferred-commit",
+    "description": "Said 'will commit later' or 'I'll commit after' but did not commit",
+    "severity": "warning",
+    "category": "deferral",
+    "source": "bundled"
+  },
+  {
+    "id": "batch-without-commit",
+    "description": "Made multiple distinct logical changes across files without any intermediate commits",
+    "severity": "warning",
+    "category": "uncommitted",
+    "source": "bundled"
+  }
+]
