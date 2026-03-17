@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.1.4
+
+[compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.3...v0.1.4)
+
+### 🚀 Enhancements
+
+- Add ui.select menus to /monitors command for TUI discoverability ([4391ca3](https://github.com/davidorex/pi-behavior-monitors/commit/4391ca3))
+
+### 📖 Documentation
+
+- Update SKILL.md with buffered steer delivery and TUI autocomplete ([94aee6e](https://github.com/davidorex/pi-behavior-monitors/commit/94aee6e))
+
+### ❤️ Contributors
+
+- David Ryan <davidryan@gmail.com>
+
 ## v0.1.3
 
 [compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.2...v0.1.3)
