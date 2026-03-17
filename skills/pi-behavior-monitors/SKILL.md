@@ -270,6 +270,13 @@ the session. A `CLEAN` verdict resets the consecutive steer counter.
 a turn, and monitor B has `"excludes": ["A"]`, monitor B skips that turn. Exclusion tracking
 resets at `turn_start`.
 
+**Buffered steer delivery**: Monitors on `message_end` or `turn_end` buffer their steer
+messages and deliver them at `agent_end`. This is because pi's async event queue processes
+extension handlers after the agent loop has already checked for steering messages. The
+buffer is drained at `agent_end` — only the first buffered steer fires per agent run; the
+corrected response re-triggers monitors naturally for any remaining issues. Monitors on
+`agent_end` or `command` events deliver steers immediately (they already run post-loop).
+
 **Abort**: Classification calls are aborted when the agent ends (via `agent_end` event).
 Aborted classifications produce no verdict and no action.
 
@@ -280,7 +287,9 @@ the `id` field of array entries.
 </runtime_behavior>
 
 <commands>
-All monitor management is through the `/monitors` command:
+All monitor management is through the `/monitors` command. Subcommands are
+discoverable via pi's TUI autocomplete — typing `/monitors ` shows available
+monitor names and global commands; selecting a monitor shows its verbs.
 
 | Command | Description |
 |---------|-------------|
