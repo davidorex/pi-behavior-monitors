@@ -121,6 +121,12 @@ export interface MonitorMessageDetails {
 	ceiling: number;
 }
 
+interface BufferedSteer {
+	monitor: Monitor;
+	details: MonitorMessageDetails;
+	content: string;
+}
+
 type MonitorEvent = "message_end" | "turn_end" | "agent_end" | "command";
 
 const VALID_EVENTS = new Set<string>(["message_end", "turn_end", "agent_end", "command"]);
@@ -896,15 +902,21 @@ async function activate(
 			whileCount: monitor.whileCount + 1,
 			ceiling: monitor.ceiling,
 		};
-		pi.sendMessage<MonitorMessageDetails>(
-			{
-				customType: "monitor-steer",
-				content: `[${monitor.name}] ${description}${annotation}. ${action.steer}`,
-				display: true,
-				details,
-			},
-			{ deliverAs: "steer", triggerTurn: true },
-		);
+		const content = `[${monitor.name}] ${description}${annotation}. ${action.steer}`;
+
+		if (monitor.event === "agent_end" || monitor.event === "command") {
+			// Already post-loop or command context: deliver immediately
+			pi.sendMessage<MonitorMessageDetails>(
+				{ customType: "monitor-steer", content, display: true, details },
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+		} else {
+			// message_end / turn_end: buffer for drain at agent_end
+			// (pi's async event queue means these handlers run after the agent loop
+			// has already checked getSteeringMessages — direct sendMessage misses
+			// the window and the steer arrives one response late)
+			pendingAgentEndSteers.push({ monitor, details, content });
+		}
 	}
 
 	monitor.whileCount++;
@@ -1002,6 +1014,7 @@ export default function (pi: ExtensionAPI) {
 			m.activationCount = 0;
 		}
 		monitorsEnabled = true;
+		pendingAgentEndSteers = [];
 		updateStatus();
 	});
 
@@ -1036,10 +1049,30 @@ export default function (pi: ExtensionAPI) {
 		return box;
 	});
 
-	// --- abort support ---
+	// --- abort support + buffered steer drain ---
 	pi.on("agent_end", async () => {
 		pi.events.emit("monitors:abort", undefined);
+
+		// Drain buffered steers from message_end/turn_end monitors.
+		// The _agentEventQueue guarantees this runs AFTER all turn_end/message_end
+		// handlers complete (sequential promise chain), so the buffer is populated.
+		// Deliver only the first — the corrected response will re-trigger monitors
+		// if additional issues remain.
+		if (pendingAgentEndSteers.length > 0) {
+			const first = pendingAgentEndSteers[0];
+			pendingAgentEndSteers = [];
+			pi.sendMessage<MonitorMessageDetails>(
+				{ customType: "monitor-steer", content: first.content, display: true, details: first.details },
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+		}
 	});
+
+	// --- buffered steers for message_end/turn_end monitors ---
+	// These monitors classify during the agent loop but can't inject steers in time
+	// (pi's async event queue means extension handlers run after the agent loop checks
+	// getSteeringMessages). Buffer steers here, drain at agent_end.
+	let pendingAgentEndSteers: BufferedSteer[] = [];
 
 	// --- per-turn exclusion tracking ---
 	let steeredThisTurn = new Set<string>();
@@ -1094,8 +1127,43 @@ export default function (pi: ExtensionAPI) {
 	const monitorNames = new Set(monitors.map((m) => m.name));
 	const monitorsByName = new Map(monitors.map((m) => [m.name, m]));
 
+	const monitorVerbs = ["rules", "patterns", "dismiss", "reset"];
+	const rulesActions = ["add", "remove", "replace"];
+
 	pi.registerCommand("monitors", {
 		description: "Manage behavior monitors",
+		getArgumentCompletions(argumentPrefix: string) {
+			const tokens = argumentPrefix.split(/\s+/);
+			const last = tokens[tokens.length - 1];
+
+			// Level 0: no complete token yet — show global commands + monitor names
+			if (tokens.length <= 1) {
+				const items = [
+					{ value: "on", label: "on", description: "Enable all monitoring" },
+					{ value: "off", label: "off", description: "Pause all monitoring" },
+					...Array.from(monitorNames).map((n) => ({ value: n, label: n, description: monitorsByName.get(n)?.description ?? "" })),
+				];
+				return items.filter((i) => i.value.startsWith(last));
+			}
+
+			const name = tokens[0];
+
+			// Level 1: monitor name entered — show verbs
+			if (monitorNames.has(name) && tokens.length === 2) {
+				return monitorVerbs
+					.map((v) => ({ value: `${name} ${v}`, label: v, description: "" }))
+					.filter((i) => i.label.startsWith(last));
+			}
+
+			// Level 2: monitor name + "rules" — show actions
+			if (monitorNames.has(name) && tokens[1] === "rules" && tokens.length === 3) {
+				return rulesActions
+					.map((a) => ({ value: `${name} rules ${a}`, label: a, description: "" }))
+					.filter((i) => i.label.startsWith(last));
+			}
+
+			return null;
+		},
 		handler: async (args: string, ctx: ExtensionContext) => {
 			const cmd = parseMonitorsArgs(args, monitorNames);
 
