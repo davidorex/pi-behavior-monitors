@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.1.3
+
+[compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.2...v0.1.3)
+
+### 🩹 Fixes
+
+- Buffer steer delivery at agent_end to work around pi async event queue ([c899fa5](https://github.com/davidorex/pi-behavior-monitors/commit/c899fa5))
+
+### 📖 Documentation
+
+- Add npm publish commands to CLAUDE.md ([91dbe87](https://github.com/davidorex/pi-behavior-monitors/commit/91dbe87))
+
+### 🏡 Chore
+
+- Scope package name to @davidorex/pi-behavior-monitors ([e9a9882](https://github.com/davidorex/pi-behavior-monitors/commit/e9a9882))
+
+### ❤️ Contributors
+
+- David Ryan <davidryan@gmail.com>
+
 ## v0.1.2
 
 [compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.1...v0.1.2)
