@@ -1141,7 +1141,7 @@ export default function (pi: ExtensionAPI) {
 				const items = [
 					{ value: "on", label: "on", description: "Enable all monitoring" },
 					{ value: "off", label: "off", description: "Pause all monitoring" },
-					...Array.from(monitorNames).map((n) => ({ value: n, label: n, description: monitorsByName.get(n)?.description ?? "" })),
+					...Array.from(monitorNames).map((n) => ({ value: n, label: n, description: `${monitorsByName.get(n)?.description ?? ""} → rules|patterns|dismiss|reset` })),
 				];
 				return items.filter((i) => i.value.startsWith(last));
 			}
@@ -1173,7 +1173,57 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (cmd.type === "list") {
-				handleList(monitors, ctx, monitorsEnabled);
+				if (!ctx.hasUI) {
+					handleList(monitors, ctx, monitorsEnabled);
+					return;
+				}
+				const options = [
+					`on — Enable all monitoring`,
+					`off — Pause all monitoring`,
+					...monitors.map((m) => {
+						const state = m.dismissed ? "dismissed" : m.whileCount > 0 ? `engaged (${m.whileCount}/${m.ceiling})` : "idle";
+						return `${m.name} — ${m.description} [${state}]`;
+					}),
+				];
+				const selected = await ctx.ui.select("Monitors", options);
+				if (!selected) return;
+				const selectedName = selected.split(" ")[0];
+				if (selectedName === "on") {
+					monitorsEnabled = true;
+					updateStatus();
+					ctx.ui.notify("Monitors enabled", "info");
+				} else if (selectedName === "off") {
+					monitorsEnabled = false;
+					updateStatus();
+					ctx.ui.notify("All monitors paused for this session", "info");
+				} else {
+					const monitor = monitorsByName.get(selectedName);
+					if (!monitor) return;
+					const verbOptions = [
+						`inspect — Show monitor state and config`,
+						`rules — List and manage rules`,
+						`patterns — List known patterns`,
+						`dismiss — Silence for this session`,
+						`reset — Reset state and un-dismiss`,
+					];
+					const verb = await ctx.ui.select(`[${monitor.name}]`, verbOptions);
+					if (!verb) return;
+					const verbName = verb.split(" ")[0];
+					if (verbName === "inspect") handleInspect(monitor, ctx);
+					else if (verbName === "rules") handleRulesList(monitor, ctx);
+					else if (verbName === "patterns") handlePatternsList(monitor, ctx);
+					else if (verbName === "dismiss") {
+						monitor.dismissed = true;
+						monitor.whileCount = 0;
+						updateStatus();
+						ctx.ui.notify(`[${monitor.name}] Dismissed for this session`, "info");
+					} else if (verbName === "reset") {
+						monitor.dismissed = false;
+						monitor.whileCount = 0;
+						updateStatus();
+						ctx.ui.notify(`[${monitor.name}] Reset`, "info");
+					}
+				}
 				return;
 			}
 
