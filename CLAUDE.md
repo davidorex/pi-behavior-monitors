@@ -12,6 +12,14 @@ Pi extension that adds behavior monitors — autonomous watchdogs that classify 
 - `skills/` — SKILL.md for LLM-assisted monitor creation
 - `CHANGELOG.md` — maintained via changelogen
 
+## Agent conduct
+
+- Execute proactively. Run every automatable command yourself. Only defer to the user for genuinely interactive operations (npm login, browser auth flows).
+- Never leave the working tree dirty. After every change, commit and verify `git status` is porcelain clean.
+- After every code change: run `npm run check`, commit, and if releasing: run `npm run release`, `npm run release:push`. Stop only at `npm publish` (interactive auth).
+- Update memory when behaviors are corrected or confirmed. Do not wait to be reminded.
+- Do not speculate without evidence. Investigate the actual runtime, not stale local types.
+
 ## Validation
 
 ```bash
@@ -55,9 +63,11 @@ npm run release:major    # force major
 npm run release:push     # git push --follow-tags
 ```
 
+All release commands are non-interactive and must be run by the agent, not deferred to the user.
+
 ## Publishing to npm
 
-Requires interactive CLI auth — cannot be automated by agents.
+Only `npm login` and `npm publish` require interactive CLI auth.
 
 ```bash
 npm login                # authenticate (interactive, one-time per machine)
