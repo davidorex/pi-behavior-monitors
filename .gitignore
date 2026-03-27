@@ -1,4 +1,6 @@
 node_modules/
 .workflow/
+.workflows/
+.project/
 .claude/
 *.tsbuildinfo
