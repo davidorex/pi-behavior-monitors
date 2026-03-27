@@ -1,0 +1,31 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.9/schema.json",
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"style": {
+				"noNonNullAssertion": "warn",
+				"useConst": "error"
+			},
+			"suspicious": {
+				"noExplicitAny": "warn"
+			}
+		}
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 120
+	},
+	"files": {
+		"includes": ["index.ts", "index.test.ts", "vitest.config.ts"]
+	}
+}

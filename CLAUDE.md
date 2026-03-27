@@ -12,6 +12,30 @@ Pi extension that adds behavior monitors — autonomous watchdogs that classify 
 - `skills/` — SKILL.md for LLM-assisted monitor creation
 - `CHANGELOG.md` — maintained via changelogen
 
+## Validation
+
+```bash
+npm run check           # full validation: type-check + lint + tests
+npm run type-check      # tsc --noEmit only
+npm run lint            # biome lint only
+npm run lint:fix        # biome auto-fix
+npm test                # vitest only
+```
+
+Always run `npm run check` before committing. The pre-commit hook enforces this.
+
+`tsc --noEmit` type-checks `index.ts` against the real `.d.ts` files from installed pi packages. This catches SDK API drift that vitest stubs cannot detect. If type-check fails after a pi update, the code needs to be updated to match the new API.
+
+## Keeping dependencies current
+
+Peer deps are set to `"*"` and resolve to whatever version npm installs. To update to latest:
+
+```bash
+npm run sync-deps       # updates pi packages to latest
+```
+
+CI always installs with fresh resolution (no lockfile) to catch breaking changes.
+
 ## Commits
 
 Use conventional commits. Prefix determines version bump:

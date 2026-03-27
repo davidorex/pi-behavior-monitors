@@ -1,11 +1,5 @@
-import { describe, it, expect } from "vitest";
-import {
-	parseMonitorsArgs,
-	parseVerdict,
-	parseModelSpec,
-	generateFindingId,
-} from "./index.ts";
-import type { MonitorsCommand, ClassifyResult } from "./index.ts";
+import { describe, expect, it } from "vitest";
+import { generateFindingId, parseModelSpec, parseMonitorsArgs, parseVerdict } from "./index.ts";
 
 // =============================================================================
 // parseMonitorsArgs

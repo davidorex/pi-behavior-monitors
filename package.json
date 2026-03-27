@@ -32,6 +32,13 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "type-check": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "check": "tsc --noEmit && biome check . && vitest run",
+    "sync-deps": "npm update @mariozechner/pi-ai @mariozechner/pi-coding-agent @mariozechner/pi-tui @sinclair/typebox",
+    "prepare": "husky || true",
     "release": "npx changelogen --bump --release",
     "release:patch": "npx changelogen --bump --release --patch",
     "release:minor": "npx changelogen --bump --release --minor",
@@ -45,6 +52,9 @@
     "@sinclair/typebox": "*"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.9",
+    "husky": "^9.1.7",
+    "typescript": "^6.0.2",
     "vitest": "^3.2.4"
   }
 }

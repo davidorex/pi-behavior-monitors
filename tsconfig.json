@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"noEmit": true,
+		"target": "ES2022",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"isolatedModules": true,
+		"resolveJsonModule": true,
+		"declaration": false,
+		"sourceMap": false
+	},
+	"include": ["index.ts"],
+	"exclude": ["node_modules", "test"]
+}
