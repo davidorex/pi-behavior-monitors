@@ -7,7 +7,7 @@ Monitors are JSON files (`.monitor.json`) with typed blocks: classify (LLM side-
 ## Install
 
 ```bash
-pi install npm:pi-behavior-monitors
+pi install npm:@davidorex/pi-behavior-monitors
 ```
 
 On first run, if no monitors exist in your project, example monitors are seeded into `.pi/monitors/`. Edit or delete them to customize.
@@ -37,9 +37,18 @@ Create a `.monitor.json` file in `.pi/monitors/` conforming to `schemas/monitor.
 
 | Command | Description |
 |---------|-------------|
-| `/monitors` | List all monitors, scope, and state |
-| `/<name>` | Show monitor patterns and instructions |
-| `/<name> <text>` | Add an instruction to calibrate the monitor |
+| `/monitors` | List all monitors, scope, and state (TUI select menu when available) |
+| `/monitors on` | Enable all monitoring |
+| `/monitors off` | Pause all monitoring |
+| `/monitors <name> rules` | Show monitor instructions |
+| `/monitors <name> rules add <text>` | Add an instruction to calibrate the monitor |
+| `/monitors <name> rules remove <N>` | Remove instruction by number |
+| `/monitors <name> rules replace <N> <text>` | Replace instruction by number |
+| `/monitors <name> patterns` | Show known patterns |
+| `/monitors <name> dismiss` | Dismiss a monitor for this session |
+| `/monitors <name> reset` | Reset monitor state (re-engage dismissed monitor) |
+| `/<name>` | Shortcut: show monitor patterns and instructions |
+| `/<name> <text>` | Shortcut: add an instruction to calibrate the monitor |
 
 ## How It Works
 
