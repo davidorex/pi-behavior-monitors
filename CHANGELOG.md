@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.1.5
+
+[compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.4...v0.1.5)
+
+### 🚀 Enhancements
+
+- Add commit-hygiene monitor for uncommitted file writes ([e8aabdf](https://github.com/davidorex/pi-behavior-monitors/commit/e8aabdf))
+
+### 🩹 Fixes
+
+- Move pendingAgentEndSteers to module scope to fix ReferenceError ([172f7e5](https://github.com/davidorex/pi-behavior-monitors/commit/172f7e5))
+
+### 🏡 Chore
+
+- Add type checking, biome lint, husky hooks, CI workflow; fix 0.63.1 SDK compatibility ([fb927f6](https://github.com/davidorex/pi-behavior-monitors/commit/fb927f6))
+- Add .workflows/ and .project/ to .gitignore ([e9be8ad](https://github.com/davidorex/pi-behavior-monitors/commit/e9be8ad))
+
+### ❤️ Contributors
+
+- David Ryan <davidryan@gmail.com>
+
 ## v0.1.4
 
 [compare changes](https://github.com/davidorex/pi-behavior-monitors/compare/v0.1.3...v0.1.4)
